@@ -141,11 +141,42 @@ jobs:
       - name: Build release APK
         working-directory: android
         run: |
+          set -o pipefail
           chmod +x ./gradlew
-          ./gradlew --no-daemon --stacktrace --console=plain \
+          ./gradlew --no-daemon --console=plain --warning-mode=summary \
             :app:assembleRelease \
             -PDAVID_VERSION_CODE=${{ github.run_number }} \
-            -PDAVID_VERSION_NAME=1.0.${{ github.run_number }}
+            -PDAVID_VERSION_NAME=1.0.${{ github.run_number }} \
+            2>&1 | tee "$GITHUB_WORKSPACE/gradle-build.log"
+
+      - name: Show the real build error
+        if: failure()
+        run: |
+          LOG=gradle-build.log
+          [[ -f "$LOG" ]] || { echo "no gradle log found"; exit 0; }
+          OUT=build-error-summary.txt
+          {
+            echo "=== Gradle: What went wrong ==="
+            awk '/^\* What went wrong:/{f=1} f{print; n++} n>25{exit}' "$LOG"
+            echo
+            echo "=== Kotlin / Java compile errors ==="
+            grep -E "^e: |error: |\.java:[0-9]+: error" "$LOG" | sort -u | head -40
+            echo
+            echo "=== C / C++ / linker errors ==="
+            grep -E "ld\.lld: error|clang(\+\+)?: error|: error: |undefined symbol|fatal error" "$LOG" | sort -u | head -40
+            echo
+            echo "=== Failed tasks ==="
+            grep -E "^> Task .* FAILED" "$LOG" | head
+          } > "$OUT"
+          cat "$OUT"
+          {
+            echo "## Build failed - real error"
+            echo '```'
+            cat "$OUT"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          grep -E "^e: |ld\.lld: error|: error: " "$LOG" | sort -u | head -10 | while IFS= read -r l; do echo "::error::${l:0:400}"; done || true
+          awk '/^\* What went wrong:/{getline a; getline b; print "::error::" a " " b; exit}' "$LOG" || true
 
       - name: Verify APK
         run: |
@@ -170,6 +201,8 @@ jobs:
         with:
           name: build-reports
           path: |
+            gradle-build.log
+            build-error-summary.txt
             android/app/build/reports
             android/app/.cxx/**/*.log
           if-no-files-found: ignore

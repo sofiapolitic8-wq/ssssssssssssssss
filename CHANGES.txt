@@ -19,3 +19,5 @@
 - NOT VERIFIED: no Android SDK/NDK or network here, so nothing was compiled.
 
 [rename fix] thermite/ + assets + tools: leftover Wyrm/WYRM/wyrm -> David/DAVID/david (fixes undefined symbol wyrm_background_tick, DAVID_SDL_JNI mismatch, david_* asset names).
+[ci] build.yml: no --stacktrace, log tee, "Show the real build error" step (summary + annotations), log uploaded on failure.
+[kotlin fix] TeamScreen.kt: dvdRounded -> davidRounded (13 uses; defined in LiquidGlass.kt).

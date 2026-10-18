@@ -405,7 +405,7 @@ private fun JoinChip(onClick: () -> Unit) {
         modifier = Modifier
             .height(32.dp)
             .scale(pressScale(pressed))
-            .clip(dvdRounded(9.dp))
+            .clip(davidRounded(9.dp))
             .background(David.Ink)
             .clickable(interactionSource = interaction, indication = null, onClick = onClick)
             .padding(horizontal = 12.dp),
@@ -445,9 +445,9 @@ private fun TeamPill(
         color = if (selected) David.OnInk else David.Mute,
         modifier = Modifier
             .scale(pressScale(pressed))
-            .clip(dvdRounded(99.dp))
+            .clip(davidRounded(99.dp))
             .background(fill)
-            .border(1.dp, stroke, dvdRounded(99.dp))
+            .border(1.dp, stroke, davidRounded(99.dp))
             .clickable(interactionSource = interaction, indication = null, onClick = onClick)
             .padding(horizontal = 13.dp, vertical = 7.dp),
     )
@@ -462,8 +462,8 @@ private fun PaperDangerButton(label: String, onClick: () -> Unit) {
             .fillMaxWidth()
             .height(46.dp)
             .scale(pressScale(pressed))
-            .clip(dvdRounded(12.dp))
-            .border(1.dp, David.Rule, dvdRounded(12.dp))
+            .clip(davidRounded(12.dp))
+            .border(1.dp, David.Rule, davidRounded(12.dp))
             .background(if (pressed) David.Badge.copy(alpha = 0.08f) else Color.Transparent)
             .clickable(interactionSource = interaction, indication = null, onClick = onClick),
         contentAlignment = Alignment.Center,
@@ -628,7 +628,7 @@ private fun ChatBubble(message: TeamMessage, mine: Boolean) {
                 fontSize = 12.sp,
                 color = David.Quiet,
                 modifier = Modifier
-                    .clip(dvdRounded(99.dp))
+                    .clip(davidRounded(99.dp))
                     .background(David.Hover)
                     .padding(horizontal = 12.dp, vertical = 5.dp),
             )
@@ -700,9 +700,9 @@ private fun InitialsWell(name: String, playing: Boolean, modifier: Modifier = Mo
     Box(
         modifier = modifier
             .size(24.dp)
-            .clip(dvdRounded(8.dp))
+            .clip(davidRounded(8.dp))
             .background(fill)
-            .border(2.dp, David.Paper, dvdRounded(8.dp)),
+            .border(2.dp, David.Paper, davidRounded(8.dp)),
         contentAlignment = Alignment.Center,
     ) {
         Text(
@@ -737,9 +737,9 @@ private fun PaperComposer(
             modifier = Modifier
                 .weight(1f)
                 .heightIn(min = 42.dp)
-                .clip(dvdRounded(11.dp))
+                .clip(davidRounded(11.dp))
                 .background(David.Card)
-                .border(1.dp, David.Rule, dvdRounded(11.dp))
+                .border(1.dp, David.Rule, davidRounded(11.dp))
                 .padding(horizontal = 13.dp, vertical = 10.dp),
             contentAlignment = Alignment.CenterStart,
         ) {
@@ -769,7 +769,7 @@ private fun PaperComposer(
         Box(
             modifier = Modifier
                 .size(42.dp)
-                .clip(dvdRounded(11.dp))
+                .clip(davidRounded(11.dp))
                 .background(if (canSend) David.Ink else David.Ink.copy(alpha = 0.35f))
                 .clickable(enabled = canSend, onClick = onSend),
             contentAlignment = Alignment.Center,
@@ -1004,12 +1004,12 @@ private fun ConnectField(
                     .padding(top = 7.dp)
                     .fillMaxWidth()
                     .height(42.dp)
-                    .clip(dvdRounded(10.dp))
+                    .clip(davidRounded(10.dp))
                     .background(David.Card)
                     .border(
                         if (valid) 1.5.dp else 1.dp,
                         if (valid) David.Link else David.Rule,
-                        dvdRounded(10.dp),
+                        davidRounded(10.dp),
                     )
                     .padding(horizontal = 12.dp),
                 contentAlignment = Alignment.CenterStart,
