@@ -1,0 +1,35 @@
+DAVID.IO REBUILD HANDOFF — 2026-10-18
+====================================
+
+STATUS
+- Source-only patch. No verified APK was produced in this environment.
+- Android namespace and applicationId: io.david.mobile; launcher label: DAVID.IO.
+- App-owned visible labels checked under android/app/src/main/java/io/david/mobile and app/src: no Wyrm/OM Rajput branding strings remain in those runtime source trees.
+- Native JNI exports were renamed to Java_io_david_mobile_DavidActivity_* to match the Java class package. Static check found 53 native methods declared and all 53 have corresponding exports; one extra legacy export, nativeDesktopTeamRects, remains and should be reviewed.
+- Team server test suite: 10 passed, 0 failed (Node.js simulation only; not a two-phone test).
+- Python source syntax compilation for tools/scripts passed.
+
+BUILD BLOCKERS IN THIS ENVIRONMENT
+- No Android SDK/NDK environment was available.
+- Gradle wrapper could not download Gradle because outbound network/DNS access was unavailable.
+- build.py requires `slangc` to generate SPIR-V shaders; that compiler is not installed here.
+- Therefore Kotlin/Java/NDK compilation, APK installation, startup, gameplay, Vulkan rendering, food rendering, frame pacing and two-device team mode remain unverified.
+
+TEAM MODE
+- `server/server.js` and TeamService integration are included.
+- Default server URL: https://lwkmod-team-server.onrender.com
+- Both phones must use the same reachable HTTPS URL and the same invite details. The hosted server's availability is external.
+
+IMPORTANT RELEASE CHECKS
+1. Build on a clean machine with JDK 17, Android SDK 36, NDK 28.2.13676358, CMake 3.22.1 and Slang compiler tooling.
+2. Review the full build log; fix compile/link errors before release.
+3. Install and test on at least two physical ARM64 Vulkan phones on different Android versions.
+4. Capture network traffic from the built APK and review every destination; this archive has not passed a packet-capture audit.
+5. Verify third-party artwork rights and comply with GPL-3.0 source-distribution and notice requirements.
+6. Use a new owner-controlled signing key and repository. `tools/publish-release.sh` is deliberately disabled to prevent accidental publishing to an inherited upstream repository.
+
+LICENSE / ATTRIBUTION
+- `LICENSE`, `NOTICE`, and third-party license/attribution files are preserved. Do not remove mandatory notices merely to make a name-search clean.
+- Some historical tooling and vendored components may still include upstream identifiers in comments, internal filenames or compatibility symbols. These are not all runtime branding. Review before deleting or renaming them; broad mass replacement can break generated assets or third-party code.
+
+See `SECURITY_RELEASE_AUDIT.md` and `CHANGES.txt` for scope and limitations.

@@ -1,0 +1,21 @@
+# DAVID.IO source rebuild changes
+
+- App label, Android namespace, and application ID: `DAVID.IO` / `io.david.mobile`.
+- Updated visible app-owned UI wordmarks and labels to DAVID.IO.
+- Corrected JNI exported function names to match `io.david.mobile.DavidActivity`; the prior symbols still used a different Java package and would not resolve through standard JNI name lookup.
+- Preserved GPL-3.0 `LICENSE`, `NOTICE`, and third-party license/attribution files. Required upstream notices must not be deleted or hidden.
+- Team server code and TeamService integration are included; see `server/` and `tests/`.
+- The server default URL is `https://lwkmod-team-server.onrender.com`; online availability is external and is not guaranteed by this source archive.
+- No claim of a successful APK build or physical-device test is made. See `HANDOFF.txt` for outstanding validation.
+
+## 2026-10-18 stability pass
+- FIXED COMPILE ERROR: Kotlin referenced R.drawable.ic_david_back/home/play and about_david_mark, but the files were still named ic_wyrm_* / about_wyrm_mark. Resources renamed.
+- Removed unreferenced inherited payment QR (about_upi_qr.png).
+- Added missing PRIVACY.md (build.gradle copies it into the app) and un-ignored it in .gitignore; Settings > Privacy would otherwise show "could not be opened".
+- UI: system font scale is clamped to 0.9x-1.15x at the theme root so fixed-height iOS-style rows do not clip on phones with large font settings.
+- Gradle: 4 GB heap + Kotlin daemon heap (1.5 GB could run out compiling this project), caching, lint no longer blocks release builds.
+- Workflow: builds an optimized RELEASE APK (debug builds compile the C engine unoptimized and run slowly), signs it (repo secrets DAVID_KEYSTORE_BASE64 / DAVID_KEYSTORE_PASSWORD / DAVID_KEY_ALIAS / DAVID_KEY_PASSWORD, or a temporary key), authenticated Slang download with retries, verifies native libs + shaders + signature in the APK, uploads logs on failure.
+- Unit tests moved to the io.david.mobile package directory.
+- NOT VERIFIED: no Android SDK/NDK or network here, so nothing was compiled.
+
+[rename fix] thermite/ + assets + tools: leftover Wyrm/WYRM/wyrm -> David/DAVID/david (fixes undefined symbol wyrm_background_tick, DAVID_SDL_JNI mismatch, david_* asset names).

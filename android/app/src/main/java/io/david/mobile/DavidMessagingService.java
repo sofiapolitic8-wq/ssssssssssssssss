@@ -1,0 +1,244 @@
+package io.david.mobile;
+
+import android.app.NotificationChannel;
+import android.app.NotificationChannelGroup;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
+import android.content.Context;
+import android.content.Intent;
+import android.content.SharedPreferences;
+import android.os.Build;
+import android.util.Log;
+
+import androidx.core.app.NotificationCompat;
+
+import com.google.firebase.messaging.FirebaseMessagingService;
+import com.google.firebase.messaging.RemoteMessage;
+import io.david.mobile.data.NotificationPreferences;
+
+import org.json.JSONObject;
+
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
+import java.util.Map;
+import java.util.concurrent.Executors;
+
+/**
+ * Receives David's push notifications, whether or not the app is open.
+ *
+ * The backend sends data-only messages — never a "notification" payload — so
+ * this is always the thing that runs, in the foreground and the background
+ * alike, instead of the OS silently auto-displaying one shape in the
+ * background and never calling here at all.
+ */
+public class DavidMessagingService extends FirebaseMessagingService {
+    private static final String TAG = "DavidMessaging";
+    public static final String ACTION_PUSH_RECEIVED = "io.david.mobile.PUSH_RECEIVED";
+    public static final String CHANNEL_MESSAGES = "david_messages";
+    public static final String CHANNEL_ALERTS = "david_alerts";
+    public static final String CHANNEL_SOCIAL = "david_social";
+    public static final String CHANNEL_RECEIPTS = "david_receipts";
+    private static final String CHANNEL_GROUP = "david_notifications";
+    private static final String SHADE_GROUP = "david";
+
+    /**
+     * Told the phone's new token directly, in plain Java.
+     *
+     * The rest of the app talks to the backend through {@code DavidRepository},
+     * a Kotlin suspend API — reasonable everywhere Compose is already running a
+     * coroutine, but this service is not, and bridging one call across that
+     * boundary is more machinery than the call itself. The session token lives
+     * in the same SharedPreferences file DavidRepository writes it to, so this
+     * reads it the same way and sends the same request by hand.
+     */
+    @Override
+    public void onNewToken(String token) {
+        Executors.newSingleThreadExecutor().execute(() -> {
+            SharedPreferences prefs = getApplicationContext()
+                    .getSharedPreferences("david_session", Context.MODE_PRIVATE);
+            String session = prefs.getString("token", null);
+            if (session == null) return;
+            // Diagnostic kill switch; see DAVID_BACKEND_DISCONNECTED.
+            if (io.david.mobile.data.DavidRepositoryKt.DAVID_BACKEND_DISCONNECTED) return;
+
+            try {
+                URL url = new URL(BuildConfig.DAVID_API_URL + "/v1/me/device-token");
+                HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+                try {
+                    connection.setRequestMethod("POST");
+                    connection.setConnectTimeout(12_000);
+                    connection.setReadTimeout(15_000);
+                    connection.setRequestProperty("Content-Type", "application/json");
+                    connection.setRequestProperty("Accept", "application/json");
+                    connection.setRequestProperty("skip_zrok_interstitial", "1");
+                    connection.setRequestProperty("Authorization", "Bearer " + session);
+                    connection.setDoOutput(true);
+                    byte[] body = new JSONObject().put("token", token).toString()
+                            .getBytes(StandardCharsets.UTF_8);
+                    try (OutputStream out = connection.getOutputStream()) {
+                        out.write(body);
+                    }
+                    connection.getResponseCode();
+                } finally {
+                    connection.disconnect();
+                }
+            } catch (Exception e) {
+                Log.w(TAG, "Could not register device token", e);
+            }
+        });
+    }
+
+    @Override
+    public void onMessageReceived(RemoteMessage message) {
+        Map<String, String> data = message.getData();
+        String title = data.getOrDefault("title", "David");
+        // David's own notices carry the whole Markdown next to the flattened line.
+        String markdown = data.getOrDefault("markdown", "");
+        String body = markdown.isEmpty() ? data.getOrDefault("body", "") : markdown;
+        String kind = data.getOrDefault("kind", "");
+        // Trails are paused for the beta (TRAILS_ENABLED): their pushes show nothing.
+        boolean trailsPaused = !io.david.mobile.data.TrailsApiKt.TRAILS_ENABLED
+                && ("trail_like".equals(kind) || "trail_reply".equals(kind));
+        if (!trailsPaused && NotificationPreferences.isKindEnabled(this, kind)) {
+            showNotification(data, title, body);
+        }
+        Intent signal = new Intent(ACTION_PUSH_RECEIVED);
+        signal.setPackage(getPackageName());
+        signal.putExtra("kind", data.getOrDefault("kind", ""));
+        signal.putExtra("id", data.getOrDefault("id", ""));
+        signal.putExtra("actorId", data.getOrDefault("actorId", ""));
+        sendBroadcast(signal);
+    }
+
+    private void showNotification(Map<String, String> data, String title, String body) {
+        NotificationManager manager = getSystemService(NotificationManager.class);
+        if (manager == null) return;
+        ensureChannels(this);
+
+        String kind = data.getOrDefault("kind", "");
+        int notificationId = notificationIdFor(data);
+        Intent intent = new Intent(this, DavidActivity.class);
+        intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        intent.putExtra("david.kind", kind);
+        intent.putExtra("david.id", data.getOrDefault("id", ""));
+        intent.putExtra("david.actorId", data.getOrDefault("actorId", ""));
+        PendingIntent pendingIntent = PendingIntent.getActivity(
+                this, notificationId, intent,
+                PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+
+        // The body is Markdown: formatted for the shade, lines and all.
+        CharSequence text = io.david.mobile.ui.DavidMarkdownKt.shadeMarkdown(body);
+        NotificationCompat.Builder notification = new NotificationCompat.Builder(this, channelFor(kind))
+                .setSmallIcon(R.drawable.ic_notification)
+                .setContentTitle(title)
+                .setContentText(text)
+                .setStyle(new NotificationCompat.BigTextStyle().bigText(text))
+                .setAutoCancel(true)
+                .setGroup(SHADE_GROUP)
+                .setContentIntent(pendingIntent);
+
+        // A Battledome event: a live countdown to its start, Copy IP and Play (DAVID.IO, 2026-10-01).
+        String address = data.getOrDefault("address", "");
+        if ("event".equals(kind) && address != null && !address.isEmpty()) {
+            long start = 0L;
+            try {
+                start = java.time.Instant.parse(data.getOrDefault("startsAt", "")).toEpochMilli();
+            } catch (Exception ignored) {
+                // No start time: no countdown, the buttons still work.
+            }
+            if (start > System.currentTimeMillis()) {
+                notification.setWhen(start).setShowWhen(true)
+                        .setUsesChronometer(true).setChronometerCountDown(true)
+                        .setSubText("Starts in");
+            }
+            Intent copy = new Intent(this, DavidNotificationActions.class)
+                    .setAction(DavidNotificationActions.ACTION_COPY_IP)
+                    .putExtra(DavidNotificationActions.EXTRA_ADDRESS, address);
+            PendingIntent copyIntent = PendingIntent.getBroadcast(this, notificationId * 2 + 1, copy,
+                    PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+            Intent play = new Intent(this, DavidActivity.class);
+            play.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+            play.putExtra("david.kind", "event");
+            play.putExtra("david.id", data.getOrDefault("id", ""));
+            play.putExtra("david.action", "play");
+            play.putExtra("david.address", address);
+            PendingIntent playIntent = PendingIntent.getActivity(this, notificationId * 2 + 2, play,
+                    PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+            notification.addAction(0, "Copy IP", copyIntent).addAction(0, "Play", playIntent);
+        }
+
+        manager.notify(notificationId, notification.build());
+    }
+
+    /** A low-priority device receipt, used only when backup work finishes off screen. */
+    public static void showBackupReceipt(Context context, String title, String body) {
+        if (!NotificationPreferences.isKindEnabled(context, "backup")) return;
+        NotificationManager manager = context.getSystemService(NotificationManager.class);
+        if (manager == null) return;
+        ensureChannels(context);
+        Intent intent = new Intent(context, DavidActivity.class);
+        intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        intent.putExtra("david.kind", "backup");
+        int id = 4999;
+        PendingIntent pending = PendingIntent.getActivity(
+                context, id, intent,
+                PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+        NotificationCompat.Builder notification = new NotificationCompat.Builder(context, CHANNEL_RECEIPTS)
+                .setSmallIcon(R.drawable.ic_notification)
+                .setContentTitle(title)
+                .setContentText(body)
+                .setStyle(new NotificationCompat.BigTextStyle().bigText(body))
+                .setAutoCancel(true)
+                .setGroup(SHADE_GROUP)
+                .setContentIntent(pending);
+        manager.notify(id, notification.build());
+    }
+
+    /** Creates the four user-controllable categories once during app startup. */
+    public static void ensureChannels(Context context) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return;
+        NotificationManager manager = context.getSystemService(NotificationManager.class);
+        if (manager == null) return;
+        manager.createNotificationChannelGroup(new NotificationChannelGroup(
+                CHANNEL_GROUP, "David"));
+        createChannel(manager, CHANNEL_MESSAGES, "Messages and invites",
+                NotificationManager.IMPORTANCE_HIGH);
+        createChannel(manager, CHANNEL_ALERTS, "Alerts",
+                NotificationManager.IMPORTANCE_HIGH);
+        createChannel(manager, CHANNEL_SOCIAL, "Social and milestones",
+                NotificationManager.IMPORTANCE_DEFAULT);
+        createChannel(manager, CHANNEL_RECEIPTS, "Backup receipts",
+                NotificationManager.IMPORTANCE_LOW);
+    }
+
+    private static void createChannel(NotificationManager manager, String id, String name,
+                                      int importance) {
+        NotificationChannel channel = new NotificationChannel(id, name, importance);
+        channel.setGroup(CHANNEL_GROUP);
+        manager.createNotificationChannel(channel);
+    }
+
+    private static String channelFor(String kind) {
+        if ("dm".equals(kind) || "invite".equals(kind) || "voice_invite".equals(kind)) {
+            return CHANNEL_MESSAGES;
+        }
+        if ("follow".equals(kind) || "achievement".equals(kind) || "rank".equals(kind)
+                || "trail_like".equals(kind) || "trail_reply".equals(kind)) {
+            return CHANNEL_SOCIAL;
+        }
+        // "support" (a reply from David) arrives with the notices.
+        if ("backup".equals(kind)) return CHANNEL_RECEIPTS;
+        return CHANNEL_ALERTS;
+    }
+
+    /** Stable per conversation and per kind, so unrelated pushes stack. */
+    private static int notificationIdFor(Map<String, String> data) {
+        String kind = data.getOrDefault("kind", "alert");
+        String key = "dm".equals(kind) || "invite".equals(kind) || "voice_invite".equals(kind)
+                ? "dm:" + data.getOrDefault("actorId", data.getOrDefault("title", ""))
+                : kind;
+        return 4200 + Math.abs(key.hashCode() % 800);
+    }
+}

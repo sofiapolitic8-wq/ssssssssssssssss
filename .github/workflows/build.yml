@@ -1,0 +1,176 @@
+name: Build DAVID.IO APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: david-io-android-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx4g
+  # Optional: add these as repository secrets to keep ONE signing key, so every
+  # APK installs as an update over the previous one.
+  #   DAVID_KEYSTORE_BASE64, DAVID_KEYSTORE_PASSWORD, DAVID_KEY_ALIAS, DAVID_KEY_PASSWORD
+
+jobs:
+  build:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('android/**/*.gradle', 'android/gradle/wrapper/gradle-wrapper.properties', 'android/gradle.properties') }}
+          restore-keys: gradle-${{ runner.os }}-
+
+      - name: Check project layout
+        run: |
+          set -euo pipefail
+          for f in android/gradlew android/settings.gradle app/res/shaders/src build.py PRIVACY.md; do
+            [[ -e "$f" ]] || { echo "::error::Missing $f. Upload the CONTENTS of DAVID.IO-Android-Source (including .github) to the repository ROOT."; exit 1; }
+          done
+
+      - name: Configure Android SDK
+        run: |
+          set -euo pipefail
+          export ANDROID_HOME="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> "$GITHUB_ENV"
+          SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -path '*/bin/sdkmanager' -type f 2>/dev/null | sort -V | tail -n 1 || true)"
+          [[ -n "$SDKMANAGER" ]] || { echo "::error::sdkmanager not found on runner"; exit 1; }
+          yes | "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --licenses >/dev/null || true
+          "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --install \
+            "platform-tools" "platforms;android-36" "build-tools;36.0.0" \
+            "ndk;28.2.13676358" "cmake;3.22.1"
+
+      - name: Install Slang shader compiler
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, re, time, urllib.request
+          hdr = {'Accept': 'application/vnd.github+json', 'User-Agent': 'DAVID-IO-build',
+                 'Authorization': 'Bearer ' + os.environ['GH_TOKEN']}
+          def get(url, h, tries=4):
+              for i in range(tries):
+                  try:
+                      with urllib.request.urlopen(urllib.request.Request(url, headers=h), timeout=120) as r:
+                          return r.read()
+                  except Exception as e:
+                      print('retry', i + 1, e); time.sleep(5 * (i + 1))
+              raise SystemExit('download failed: ' + url)
+          release = json.loads(get('https://api.github.com/repos/shader-slang/slang/releases/latest', hdr))
+          assets = release.get('assets', [])
+          cand = [a for a in assets if re.search(r'linux.*x86_64.*\.(zip|tar\.gz|tgz)$', a['name'], re.I)
+                  and not re.search(r'debug|symbols|dbg|aarch64|arm64', a['name'], re.I)]
+          # prefer the plain release binary: slang-<ver>-linux-x86_64.tar.gz / .zip
+          pick = [a for a in cand if re.fullmatch(r'slang-[\d.]+-linux-x86_64\.(zip|tar\.gz|tgz)', a['name'], re.I)] or cand
+          if not pick:
+              raise SystemExit('No Linux x86_64 Slang asset: ' + ', '.join(a['name'] for a in assets))
+          a = pick[0]; print(a['browser_download_url'])
+          open('/tmp/slang-asset', 'wb').write(get(a['browser_download_url'], {'User-Agent': 'DAVID-IO-build'}))
+          open('/tmp/slang-asset-name', 'w').write(a['name'])
+          PY
+          mkdir -p /tmp/slang-unpack "$HOME/.local/bin"
+          case "$(cat /tmp/slang-asset-name)" in
+            *.zip) unzip -q /tmp/slang-asset -d /tmp/slang-unpack ;;
+            *) tar -xzf /tmp/slang-asset -C /tmp/slang-unpack ;;
+          esac
+          SLANGC="$(find /tmp/slang-unpack -type f -name slangc | head -n 1)"
+          [[ -n "$SLANGC" ]] || { echo "::error::slangc not found in archive"; exit 1; }
+          chmod +x "$SLANGC"
+          # keep slangc next to its shared libraries
+          echo "$(dirname "$SLANGC")" >> "$GITHUB_PATH"
+          "$SLANGC" -version || true
+
+      - name: Compile game shaders
+        run: python3 build.py 2
+
+      - name: Prepare signing
+        id: signing
+        env:
+          KS_B64: ${{ secrets.DAVID_KEYSTORE_BASE64 }}
+          KS_PASS: ${{ secrets.DAVID_KEYSTORE_PASSWORD }}
+          KS_ALIAS: ${{ secrets.DAVID_KEY_ALIAS }}
+          KS_KEYPASS: ${{ secrets.DAVID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          mkdir -p release-signing
+          if [[ -n "${KS_B64:-}" ]]; then
+            echo "$KS_B64" | base64 -d > release-signing/david.jks
+            ALIAS="$KS_ALIAS"; SPASS="$KS_PASS"; KPASS="${KS_KEYPASS:-$KS_PASS}"
+            echo "mode=secrets" >> "$GITHUB_OUTPUT"
+          else
+            # No secrets set: make a throwaway key so the APK is still installable.
+            ALIAS=david; SPASS="$(openssl rand -hex 12)"; KPASS="$SPASS"
+            keytool -genkeypair -v -keystore release-signing/david.jks -alias "$ALIAS" \
+              -keyalg RSA -keysize 2048 -validity 10000 -storepass "$SPASS" -keypass "$KPASS" \
+              -dname "CN=DAVID.IO, O=DAVID.IO, C=IN" >/dev/null
+            echo "mode=temporary" >> "$GITHUB_OUTPUT"
+            echo "::warning::Using a temporary signing key. Each build gets a new key, so you must uninstall the old app before installing a new APK. Add the DAVID_KEYSTORE_* secrets to keep one key."
+          fi
+          cat > release-signing/keystore.properties <<PROPS
+          storeFile=../release-signing/david.jks
+          storePassword=$SPASS
+          keyAlias=$ALIAS
+          keyPassword=$KPASS
+          PROPS
+          sed -i 's/^ *//' release-signing/keystore.properties
+
+      - name: Build release APK
+        working-directory: android
+        run: |
+          chmod +x ./gradlew
+          ./gradlew --no-daemon --stacktrace --console=plain \
+            :app:assembleRelease \
+            -PDAVID_VERSION_CODE=${{ github.run_number }} \
+            -PDAVID_VERSION_NAME=1.0.${{ github.run_number }}
+
+      - name: Verify APK
+        run: |
+          set -euo pipefail
+          APK="$(ls android/app/build/outputs/apk/release/*.apk | head -n 1)"
+          echo "APK: $APK ($(du -h "$APK" | cut -f1))"
+          unzip -l "$APK" | grep -E "lib/arm64-v8a/lib(main|SDL3)\.so" || { echo "::error::native libraries missing from APK"; exit 1; }
+          unzip -l "$APK" | grep -E "assets/shaders/bin/.*\.spv" >/dev/null || { echo "::error::compiled shaders missing from APK"; exit 1; }
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose "$APK" | head -5
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: DAVID-IO-APK
+          path: android/app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload build reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-reports
+          path: |
+            android/app/build/reports
+            android/app/.cxx/**/*.log
+          if-no-files-found: ignore
+          retention-days: 7

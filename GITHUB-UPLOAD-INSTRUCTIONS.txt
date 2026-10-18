@@ -1,0 +1,15 @@
+DAVID.IO GitHub Actions build
+=============================
+
+1. Extract this ZIP.
+2. Open the DAVID.IO-Android-Source folder.
+3. Upload the CONTENTS of that folder to the ROOT of a new GitHub repository.
+   Include the hidden .github folder. Do not upload only the parent folder.
+4. Commit to main or master.
+5. Open GitHub Actions and run “Build DAVID.IO APK” if it did not start automatically.
+6. On success, download the DAVID-IO-debug-APK artifact.
+
+This workflow builds a DEBUG APK for testing. It is not a signed production release.
+It installs Android SDK 36, NDK 28.2.13676358, CMake 3.22.1 and downloads Slang
+compiler tooling to generate SPIR-V shaders. Build success is not guaranteed until
+the workflow completes; inspect the failed step if any source/dependency error remains.

@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "source": "github",
+  "productName": "David",
+  "packageName": "io.david.mobile",
+  "versionCode": 710,
+  "versionName": "7.1.0",
+  "minimumVersionCode": 0,
+  "mandatory": false,
+  "apkUrl": "https://github.com/disis-om/david-android/releases/download/v7.1.0/David-v7.1.0.apk",
+  "apkSize": 66545000,
+  "sha256": "95c640d13af745c72a7b505b67e132827fe0cb78a41c03bece66ce4886e94e35",
+  "publishedAt": "2026-10-09T09:43:36Z",
+  "headline": "A new version of David",
+  "author": "DAVID.IO",
+  "releaseNotes": ["See your friends play, and Join their arena.", "Every arena, with real pings and country flags.", "Home keeps the arena you picked.", "Eyes Back: a new on-screen button.", "77 new David tags.", "Snake shadow and a spine width slider in Modes.", "Messages look like Instagram.", "A smoother minimap.", "Plays like the web client; your skin goes in as built.", "Fixed: a screen crash and the Auto restart sliders."]
+}
